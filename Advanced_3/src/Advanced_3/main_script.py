@@ -6,7 +6,7 @@ import argparse
 import sys
 import tensorflow as tf
 
-import Advanced_2.part1 as p1        
+import Advanced_3.demo as p1        
         
 
 def main(_): 
