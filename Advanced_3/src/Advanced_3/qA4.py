@@ -294,7 +294,7 @@ def run_net(learning_rate):
                 
             
 #             for i in range(int( num_training_samples / batch_size)):
-            for i in range(1000):
+            for i in range(100):
 #                 sa_t, r_t1, sa0_t1, sa1_t1 = e_data.sample(i).get_data()
                 sa_t, r_t1, sa0_t1, sa1_t1, s_t, s_t1, a_t, max_Q = e_data.sample(batch_size)
 #                 sa_t, r_t1, sa0_t1, sa1_t1 = e_data.all_data()
@@ -323,7 +323,7 @@ def run_net(learning_rate):
                                             feed_dict={x: s_t, target: target_vals})
                     
          
-            if epoch % 10 == 0: #calc intermediate results
+            if epoch % 1 == 0: #calc intermediate results
                 
                 mean_r, mean_episode_len = run_agent_on_env(sess, Qfunc, x, W, b, use_sa_input)
                 assign_op1 = mean_return.assign(mean_r)
