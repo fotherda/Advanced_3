@@ -183,13 +183,17 @@ def weight_variable(shape):
 
 def bias_variable(shape):
     initial = tf.constant(0.0, shape=shape)
+#     initial = tf.truncated_normal(shape, stddev=0.01)
     return tf.Variable(initial)
  
+def weight_decay(var, wd):
+    weight_decay = tf.mul(tf.nn.l2_loss(var), wd, name='weight_loss')
+    tf.add_to_collection('weight_losses', weight_decay)#
  
 def build_net(x, n_inputs, n_outputs):
     W = weight_variable([n_inputs, n_outputs])
     b = weight_variable([n_outputs])
-    y = tf.matmul(x, W) + b 
+    y = tf.matmul(x, W) + b
 #     y = -tf.sigmoid(tf.matmul(x, W) + b)
     return y, b, W
 
@@ -223,6 +227,7 @@ def run_net(learning_rate):
     n_hidden = 100
     n_state_dims = 4
     use_sa_input = False
+    LAMBDA = 0.00001
     
     if use_sa_input:
         n_inputs = n_state_dims + 1
@@ -239,14 +244,17 @@ def run_net(learning_rate):
     mean_return = tf.Variable(0.0)
     tf.summary.scalar('mean_return', mean_return)
 
-#     Qfunc, b, W = build_net(x, n_inputs, n_outputs) 
-    Qfunc, b, W = build_net2(x, n_inputs, n_hidden, n_outputs, use_batch_norm=False) 
+
+    Qfunc, b, W = build_net(x, n_inputs, n_outputs) 
+#     Qfunc, b, W = build_net2(x, n_inputs, n_hidden, n_outputs, use_batch_norm=False) 
     loss = tf.reduce_mean(tf.square(tf.sub(target, Qfunc)))
+    l2_loss = tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()])
+    total_loss = loss + LAMBDA * l2_loss
     tf.summary.scalar('loss', loss)
 
 #     train_step = tf.train.GradientDescentOptimizer(learning_rate).minimize(loss)
-#     train_step = tf.train.AdamOptimizer(learning_rate).minimize(loss)
-    train_step = tf.train.RMSPropOptimizer(learning_rate).minimize(loss)
+    train_step = tf.train.AdamOptimizer(learning_rate).minimize(total_loss)
+#     train_step = tf.train.RMSPropOptimizer(learning_rate).minimize(loss)
 
     e_data = AllEpisodeData(MAX_EPISODES)     
     e_data.collect_episodes(use_saved=True)
@@ -261,7 +269,7 @@ def run_net(learning_rate):
         # init operation
         tf.global_variables_initializer().run()    
         
-#         conv_tester = ConvergenceTester(0.0005, lookback_window=50, decreasing=True) #stop if converged to within 0.05%
+        conv_tester = ConvergenceTester(1, lookback_window=5) #stop if converged to within 0.05%
 
         Qfunc_s_t1 = [0, 0]
 
@@ -269,7 +277,7 @@ def run_net(learning_rate):
         # Train
         for epoch in range(10000):
             
-            if epoch % 200 == 0: #update Q_beta value
+            if epoch % 5 == 0: #update Q_beta value
                 sa_t, r_t1, sa0_t1, sa1_t1, s_t, s_t1, a_t = e_data.all_data()
                 Qfunc_s_t1, b_val, W_val = sess.run([Qfunc, b, W], feed_dict={x: s_t1})
                 max_Q_beta = np.amax(Qfunc_s_t1, axis=1)
@@ -305,11 +313,12 @@ def run_net(learning_rate):
                                             feed_dict={x: s_t, target: target_vals})
                     
          
-            if epoch % 50 == 0: #calc intermediate results
+            if epoch % 1 == 0: #calc intermediate results
                 
                 mean_r, mean_episode_len = run_agent_on_env(sess, Qfunc, x, W, b, use_sa_input)
                 assign_op1 = mean_return.assign(mean_r)
                 assign_op2 = mean_episode_length.assign(mean_episode_len)
+                sess.run([assign_op1, assign_op2])
 #                 _, _, loss_val = sess.run([assign_op1, assign_op2, loss],
                 sa_t, r_t1, sa0_t1, sa1_t1, s_t, s_t1, a_t = e_data.all_data()
                 if use_sa_input:
@@ -324,23 +333,28 @@ def run_net(learning_rate):
                     Qfunc_s_t = sess.run(Qfunc, feed_dict={x: s_t})
                     Qfunc_s_t1 = sess.run(Qfunc, feed_dict={x: s_t1})
                     
-                    max_Q = np.amax(Qfunc_s_t1, axis=1)
+                    max_Q_test = np.amax(Qfunc_s_t1, axis=1)
                     target_vals = Qfunc_s_t
-                    all_poss_targets = r_t1 + GAMMA * max_Q
-                    for target_val, action, apt in zip(target_vals, a_t, all_poss_targets):
-                        target_val[action] = apt
-                    Q_vals, loss_val, b_val, W_val = sess.run([Qfunc, loss, b, W], feed_dict={x: s_t, target: target_vals})
-                
-                print('{} loss {:.4f} return {:.3f} len {:.1f} Q {:.3f} maxQ {:.3f} W {:.3f} b {:.3f}'.
-                      format(epoch+1, loss_val, mean_r, mean_episode_len, 
-                    np.mean(Q_vals), np.mean(max_Q_beta), np.mean(W_val), np.mean(b_val)))
-                               
-                train_writer.add_summary(train_summary, epoch)
                     
-    #                 if conv_tester.has_converged(loss_val):
-    #                     print('converged after ', i, ' epochs')
-    #                     break
+                    for target_val, action, r, mQ in zip(target_vals, a_t, r_t1, max_Q_test):
+                        if r < 0:
+                            target_val[action] = r
+                        else:
+                            target_val[action] = r + GAMMA * mQ
+                    Q_vals, loss_val, l2_loss_val, b_val, W_val,train_summary = sess.run([Qfunc, loss, l2_loss, b, W, merged], feed_dict={x: s_t, target: target_vals})
 
+                train_writer.add_summary(train_summary, epoch)
+                
+                if epoch % 10 == 0: #calc intermediate results
+                    print('{} loss {:.4f} l2_loss {:.4f} return {:.3f} len {:.0f} Q {:.3f} maxQ {:.3f} W {:.3f} b {:.3f}'.
+                          format(epoch+1, loss_val, l2_loss_val*LAMBDA, mean_r, mean_episode_len, 
+                        np.mean(Q_vals), np.mean(max_Q_beta), np.mean(W_val), np.mean(b_val)))
+                               
+                if mean_episode_len >199:
+#                 if conv_tester.has_converged_to_constant(mean_episode_len, 200):
+                    print('converged after ', epoch, ' epochs')
+                    break
+                    
 
 def get_greedy_action(sess, Qfunc, x, s, W, b, use_sa_input):
     if use_sa_input:
@@ -368,13 +382,14 @@ def get_greedy_action(sess, Qfunc, x, s, W, b, use_sa_input):
 
 
 def run_agent_on_env(sess, Qfunc, x, W, b, use_sa_input):
-    n_episodes = 25
+    n_episodes = 10
     rewards = np.zeros(n_episodes)
     episode_length = np.zeros(n_episodes)
     
     for episode in range(n_episodes):
         discount_factor = GAMMA
         s_t = env.reset()
+#         for t in range(100):
         for t in range(MAX_EPISODE_LENGTH):
             s_t = np.expand_dims( np.transpose(s_t), axis=0)
             _, max_a = get_greedy_action(sess, Qfunc, x, s_t, W, b, use_sa_input)
@@ -387,11 +402,15 @@ def run_agent_on_env(sess, Qfunc, x, W, b, use_sa_input):
             
             discount_factor *= GAMMA
             s_t = s_t1
-        
+            
+        if episode_length[episode]==0: #completed
+            rewards[episode] = 0
+            episode_length[episode] = t+1
+                
     mean_r = np.mean(rewards)  
-    mean_episode_length = np.mean(episode_length)  
+    mean_episode_len = np.mean(episode_length)  
 #     print('mean reward {}'.format(mean_r))
-    return mean_r, mean_episode_length
+    return mean_r, mean_episode_len
 
 
 run_net(1e-4)
