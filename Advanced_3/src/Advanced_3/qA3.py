@@ -323,7 +323,7 @@ def run_net(learning_rate):
                                             feed_dict={x: s_t, target: target_vals})
                     
          
-            if epoch % 10 == 0: #calc intermediate results
+            if epoch % 1 == 0: #calc intermediate results
                 
                 mean_r, mean_episode_len = run_agent_on_env(sess, Qfunc, x, W, b, use_sa_input)
                 assign_op1 = mean_return.assign(mean_r)
@@ -384,10 +384,10 @@ def get_greedy_action(sess, Qfunc, x, s, W, b, use_sa_input):
     else:
         batch_size = s.shape[0]
         a_t1 = np.zeros((batch_size,1))
-        Qfunc_s_t1 = sess.run(Qfunc, feed_dict={x: s})
+        Qfunc_s_t = sess.run(Qfunc, feed_dict={x: s})
         
-        max_Q = np.amax(Qfunc_s_t1)
-        max_a = np.argmax(Qfunc_s_t1, axis=1)
+        max_Q = np.amax(Qfunc_s_t)
+        max_a = np.argmax(Qfunc_s_t, axis=1)
         return max_Q, max_a[0]
 
 
