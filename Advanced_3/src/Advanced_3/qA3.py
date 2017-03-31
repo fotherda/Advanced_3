@@ -266,7 +266,7 @@ def run_net(learning_rate):
 #     train_step = tf.train.RMSPropOptimizer(learning_rate).minimize(total_loss)
 
     e_data = AllEpisodeData(MAX_EPISODES)     
-    num_training_samples = e_data.collect_episodes(use_saved=True)
+    num_training_samples = e_data.collect_episodes(use_saved=False)
 
     with tf.Session() as sess:    
 

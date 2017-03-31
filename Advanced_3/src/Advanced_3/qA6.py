@@ -17,6 +17,49 @@ GAMMA = 0.99
 EPSILON = 0.05
 
         
+class AllEpisodeData:
+    
+    def __init__(self):
+        self._s_t = []
+        self._a_t = []
+        self._r_t1 = []
+        self._s_t1 = []
+        return
+    
+    def num_samples(self):
+        return len(self._s_t)
+    
+    def sample(self, batch_size):
+        idxs = np.random.randint(self.num_samples(), size=batch_size)
+        
+        s_ts = []
+        a_ts = []
+        r_t1s = []
+        s_t1s = []
+        
+        for i in idxs:
+            s_ts.append(self._s_t[i])
+            a_ts.append(self._a_t[i])
+            r_t1s.append(self._r_t1[i])
+            s_t1s.append(self._s_t1[i])
+        return s_ts, a_ts, r_t1s, s_t1s
+    
+    def all_data(self):
+        return self._s_t, self._a_t, self._r_t1, self._s_t1
+
+    def add_data(self, s_t, a_t, r_t1, s_t1):
+        self._s_t.append(s_t)
+        self._a_t.append(a_t)
+        self._r_t1.append(r_t1)
+        self._s_t1.append(s_t1)
+    
+    def normalize(self):
+        med = np.median(self._s_t, axis=0)       
+        
+        for episode_data in self._data:
+            episode_data.normalize(med)
+
+        
 def weight_variable(shape):
 #     initial = tf.constant(0.0, shape=shape)
     initial = tf.truncated_normal(shape, stddev=0.01)
@@ -28,8 +71,8 @@ def bias_variable(shape):
     return tf.Variable(initial, 'b')
  
 def build_net(n_inputs, n_hidden, n_outputs, LAMBDA):
-    x = tf.placeholder(tf.float32, [1,n_inputs], 'x')
-    target = tf.placeholder(tf.float32, [1, n_outputs], 'target')
+    x = tf.placeholder(tf.float32, [None,n_inputs], 'x')
+    target = tf.placeholder(tf.float32, [None, n_outputs], 'target')
     
     W_1 = weight_variable([n_inputs, n_hidden])
     b_1 = bias_variable([n_hidden])   
@@ -48,9 +91,10 @@ def build_net(n_inputs, n_hidden, n_outputs, LAMBDA):
 
 
 def run_net(learning_rate):
+    batch_size = 16
     n_hidden = 100
     n_state_dims = 4
-    LAMBDA = 0.0001
+    LAMBDA = 0.00000001
     n_inputs = n_state_dims
     n_outputs = 2
 
@@ -67,53 +111,76 @@ def run_net(learning_rate):
 
     with tf.Session() as sess:    
         n_episodes = 2000
-        n_repeats = 100
+        n_repeats = 5
+        trajectory_len = 1
+        num_training_epochs = 1
+        max_training_samples = 10000
         
-        target_update_interval = 1
-        step_update_interval = 0
         episode_length = np.zeros((n_repeats, n_episodes))
         rewards = np.zeros((n_repeats, n_episodes))
         residuals = np.zeros((n_repeats, n_episodes))
+        
+        replay_buffer = AllEpisodeData()
+        residual_val = 0
+        
         
         for rep in range(n_repeats):
             tf.global_variables_initializer().run()    
 
             for episode in range(n_episodes):
+                num_training_samples = replay_buffer.num_samples()
+                if episode % trajectory_len == 0 and \
+                        batch_size < num_training_samples: #update function
+
+                    for epoch in range(num_training_epochs):
+                        
+                        for i in range(int( min(max_training_samples,num_training_samples) / batch_size)):
+
+                            s_ts, a_ts, r_t1s, s_t1s = replay_buffer.sample(batch_size=batch_size)
+                            Qfunc_s_t = sess.run(Qfunc, feed_dict={x: s_ts})
+                            Qfunc_s_t1 = sess.run(Qfunc, feed_dict={x: s_t1s})
+                            max_Q = np.amax(Qfunc_s_t1, axis=1)
+                            
+                            target_vals = Qfunc_s_t
+                                
+                            for target_val, action, r, mQ in zip(target_vals, a_ts, r_t1s, max_Q):
+                                if r < 0:
+                                    target_val[action] = r
+                                else:
+                                    target_val[action] = GAMMA * mQ
+                
+                            Qfunc_val, loss_val, residual_val, _ = sess.run([Qfunc, loss, residual, train_step], 
+                                                    feed_dict={x: s_ts, target: target_vals})
+                    print('{} len {} Q {:.3f} loss {:.3f} residual {:.3f}'.
+                          format(episode, np.asscalar(np.mean(episode_length[rep, episode-5:episode])),np.asscalar(np.mean(Qfunc_val)), 
+                                 np.asscalar(np.mean(loss_val)), np.asscalar(np.mean(residual_val))))
+
+
                 s_t = env.reset()
-                s_t = np.expand_dims( np.transpose(s_t), axis=0)
                 discount_factor = GAMMA
                 
                 for t in range(MAX_EPISODE_LENGTH):
-
-                    a_t, Qfunc_s_t_val = get_epsilon_greedy_action(sess, Qfunc, x, s_t, EPSILON)
+                    a_t, _ = get_epsilon_greedy_action(sess, Qfunc, x, s_t, EPSILON)
                     s_t1, _, done, _ = env.step(a_t)
                     
-                    target_val = Qfunc_s_t_val.copy()
                     if done:
                         r_t1 = -1
-                        target_val[0,a_t] = r_t1
                     else:
-                        s_t1 = np.transpose(np.expand_dims(s_t1, axis=1))
-                        if target_update_interval > 0:
-                            Qfunc_s_t1_val = sess.run(Qfunc_tar, feed_dict={x_tar: s_t1})
-                        else:
-                            Qfunc_s_t1_val = sess.run(Qfunc, feed_dict={x: s_t1})
-                        max_Q_s_t1 = np.amax(Qfunc_s_t1_val)
-                        target_val[0,a_t] = GAMMA * max_Q_s_t1
+                        r_t1 = 0
+
+                    replay_buffer.add_data(s_t, a_t, r_t1, s_t1)
                     
-                    residual_val,_ = sess.run([residual,train_step], feed_dict={x: s_t, target: target_val})
+#                     residual_val,_ = sess.run([residual], feed_dict={x: s_t})
         
                     if done:
                         break
 
-                    if step_update_interval > 0 and t % step_update_interval == 0: 
-                        sess.run(update_target_op)
-                
                     discount_factor *= GAMMA
                     s_t = s_t1
     
-#                 if episode % 100 ==0:
-#                     print('{} Q {:.3f}'.format(episode, np.asscalar(np.mean(Qfunc_s_t_val))))
+#                 if episode % 20 ==0:
+#                     print('{} Q {:.3f} loss {:.3f} residual {:.3f}'.
+#                           format(episode, np.asscalar(np.mean(Qfunc_val)), loss_val, residual_val))
                     
                 episode_length[rep,episode] = t+1
                 if r_t1 == 0:
@@ -122,22 +189,20 @@ def run_net(learning_rate):
                     rewards[rep,episode] -= 1.0 * discount_factor
                 residuals[rep,episode] = abs(np.asscalar(np.sum(residual_val)))
                     
-                if target_update_interval > 0 and episode % target_update_interval == 0: 
-                    sess.run(update_target_op)
                     
             print('run {} len {}'.format(rep, np.asscalar(np.mean(episode_length[rep]))))
-            pi.dump( (episode_length, residuals, rewards), open( 'qA4_data', "wb" ) )
+            pi.dump( (episode_length, residuals, rewards), open( 'qA6_data', "wb" ) )
 
 
 #         (episode_length, losses, rewards) = pi.load( open( 'qA4_data', "rb" ) )
     
         x_s = np.arange(0, n_episodes, 1)
         
-        plt.figure(1, figsize=(15, 5))
+        plt.figure(1, figsize=(12, 8))
         plt.subplot(311)
         plt.plot(x_s, np.mean(residuals, axis=0), 'r-')
-#         plt.title("target_update_interval: "+str(target_update_interval) + 
-#                   ' mean episode length: ' + str(np.asscalar(np.mean(episode_length))))
+        plt.title("trajectory length: "+str(trajectory_len) + 
+                  ' mean episode length: ' + str(np.asscalar(np.mean(episode_length))))
         plt.ylabel('Absolute Residual')
         
         plt.subplot(312)
@@ -155,6 +220,9 @@ def run_net(learning_rate):
 
 def get_epsilon_greedy_action(sess, Qfunc, x, s, epsilon):
 
+    s = np.expand_dims( np.transpose(s), axis=0)
+#     s = np.expand_dims( np.transpose(s.copy()), axis=0)
+                    
     Qfunc_s_t = sess.run(Qfunc, feed_dict={x: s})
     if random.random() < epsilon: #explore
         return random.randint(0,1), Qfunc_s_t
