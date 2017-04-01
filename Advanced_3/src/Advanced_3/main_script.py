@@ -5,12 +5,35 @@ from __future__ import print_function
 import argparse
 import sys
 import tensorflow as tf
+import logging
+logging.getLogger("tensorflow").setLevel(logging.ERROR)
 
-import Advanced_3.demo as p1        
+
+# import Advanced_3.demo as p1        
+import Advanced_3.qA3 as qA3      
+import Advanced_3.qA4 as qA4      
+import Advanced_3.qA5 as qA5      
+import Advanced_3.qA6 as qA6      
+import Advanced_3.qA7 as qA7      
+import Advanced_3.qA8 as qA8      
         
 
 def main(_): 
-    p1.run_models(FLAGS)
+    
+    if FLAGS.model=='qA3':
+        qA3.run_net(1e-4, FLAGS)
+    elif FLAGS.model=='qA4':
+        qA4.run_net(1e-3, FLAGS)
+    elif FLAGS.model=='qA5':
+        qA5.run_net(1e-3, FLAGS)
+    elif FLAGS.model=='qA6':
+        qA6.run_net(1e-3, FLAGS)
+    elif FLAGS.model=='qA7':
+        qA7.run_net(1e-3, FLAGS)
+    elif FLAGS.model=='qA8':
+        qA8.run_net(1e-3, FLAGS)
+
+#     p1.run_models(FLAGS)
     
    
    

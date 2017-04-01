@@ -1,5 +1,5 @@
-import os
 import gym
+import os
 import numpy as np
 import random
 import tensorflow as tf
@@ -7,8 +7,9 @@ import pickle as pi
 import matplotlib.pyplot as plt
 
 root_dir = 'C:/Users/Dave/Documents/GI13-Advanced/Assignment3';
-summaries_dir = root_dir + '/Summaries';
+# summaries_dir = root_dir + '/Summaries';
 save_dir = root_dir;
+
 
 MAX_EPISODES = 2000
 MAX_EPISODE_LENGTH = 300
@@ -20,6 +21,7 @@ def save_model(session, model_name, root_dir):
         os.mkdir(root_dir + '/model/')
     saver = tf.train.Saver(write_version=1)
     save_path = saver.save(session, root_dir + '/model/' + model_name +'.ckpt')
+
         
 class AllEpisodeData:
     
@@ -95,8 +97,8 @@ def build_net(n_inputs, n_hidden, n_outputs, LAMBDA):
 
 
 def run_net(learning_rate, FLAGS):
+    plot_data(MAX_EPISODES)
     env = gym.make('CartPole-v0')
-
     batch_size = 16
     n_hidden = 100
     n_state_dims = 4
@@ -106,30 +108,31 @@ def run_net(learning_rate, FLAGS):
 
     x, Qfunc, target, loss, residual = build_net(n_inputs, n_hidden, n_outputs, LAMBDA) 
     network_params = tf.trainable_variables()
-
-    x_tar, Qfunc_tar, _,_,_ = build_net(n_inputs, n_hidden, n_outputs, LAMBDA) 
+    x_tar, Qfunc_tar, target_tar,loss_tar, residual_tar = build_net(n_inputs, n_hidden, n_outputs, LAMBDA) 
     target_network_params = tf.trainable_variables()[len(network_params):]
     
     update_target_op = [target_network_params[i].assign(network_params[i]) 
                             for i in range(len(target_network_params))]
     
     train_step = tf.train.AdamOptimizer(learning_rate).minimize(loss)
-    path_arr = [FLAGS.model, "n_hidden{}".format(n_hidden), "lr{:g}".format(learning_rate)]
+    train_step_tar = tf.train.AdamOptimizer(learning_rate).minimize(loss_tar)
+
+    n_episodes = 2000
+    n_repeats = 10
+    trajectory_len = 5
+    num_training_epochs = 1
+    max_training_samples = 10000
+    use_double_Q_learning = False
+
+    path_arr = [FLAGS.model, "rep{}".format(n_repeats), "DQ{}".format(use_double_Q_learning)]
 
     with tf.Session() as sess:    
-        n_episodes = 2
-        n_repeats = 1
-        trajectory_len = 5
-        num_training_epochs = 1
-        max_training_samples = 10000
-        
         episode_length = np.zeros((n_repeats, n_episodes))
         rewards = np.zeros((n_repeats, n_episodes))
         residuals = np.zeros((n_repeats, n_episodes))
         
         replay_buffer = AllEpisodeData()
         residual_val = 0
-        
         
         for rep in range(n_repeats):
             tf.global_variables_initializer().run()    
@@ -143,24 +146,32 @@ def run_net(learning_rate, FLAGS):
                         
                         for i in range(int( min(max_training_samples,num_training_samples) / batch_size)):
 
+                            Qfunc_A, x_A, target_A, loss_A, residual_A, train_step_A, \
+                            Qfunc_B, x_B = \
+                                randomly_pick_AorB_net(use_double_Q_learning, Qfunc, x, target, loss, residual, train_step, 
+                                                   Qfunc_tar, x_tar, target_tar, loss_tar, residual_tar, train_step_tar) 
+
                             s_ts, a_ts, r_t1s, s_t1s = replay_buffer.sample(batch_size=batch_size)
-                            Qfunc_s_t = sess.run(Qfunc, feed_dict={x: s_ts})
-                            Qfunc_s_t1 = sess.run(Qfunc, feed_dict={x: s_t1s})
-                            max_Q = np.amax(Qfunc_s_t1, axis=1)
+                            Qfunc_s_t = sess.run(Qfunc_A, feed_dict={x_A: s_ts})
+                            Qfunc_s_t1 = sess.run(Qfunc_A, feed_dict={x_A: s_t1s})
+                            Qfunc_s_t1_B = sess.run(Qfunc_B, feed_dict={x_B: s_t1s})
+                            max_a = np.argmax(Qfunc_s_t1, axis=1)
                             
                             target_vals = Qfunc_s_t
                                 
-                            for target_val, action, r, mQ in zip(target_vals, a_ts, r_t1s, max_Q):
+                            for target_val, action, r, ma, Q_B in zip(target_vals, a_ts, r_t1s, max_a, Qfunc_s_t1_B):
                                 if r < 0:
                                     target_val[action] = r
                                 else:
+                                    mQ = Q_B[ma]
                                     target_val[action] = GAMMA * mQ
                 
-                            Qfunc_val, loss_val, residual_val, _ = sess.run([Qfunc, loss, residual, train_step], 
-                                                    feed_dict={x: s_ts, target: target_vals})
-                    print('{} len {} Q {:.3f} loss {:.3f} residual {:.3f}'.
-                          format(episode, np.asscalar(np.mean(episode_length[rep, episode-5:episode])),np.asscalar(np.mean(Qfunc_val)), 
-                                 np.asscalar(np.mean(loss_val)), np.asscalar(np.mean(residual_val))))
+                            Qfunc_val, loss_val, residual_val, _ = sess.run([Qfunc_A, loss_A, residual_A, train_step_A], 
+                                                    feed_dict={x_A: s_ts, target_A: target_vals})
+                if episode>0 and episode % 50 == 0: 
+                    print('{} len {} residual {:.3f}'.
+                          format(episode, np.asscalar(np.mean(episode_length[rep, episode-5:episode])), 
+                                 np.asscalar(np.mean(residual_val))))
 
 
                 s_t = env.reset()
@@ -197,14 +208,14 @@ def run_net(learning_rate, FLAGS):
                 residuals[rep,episode] = abs(np.asscalar(np.sum(residual_val)))
                     
                     
+
+            #save trained model
+            model_file_name = '_'.join(path_arr)+'_'+ str(epoch) #write every epoch
+            save_model(sess, model_file_name, root_dir)
+
             print('run {} len {}'.format(rep, np.asscalar(np.mean(episode_length[rep]))))
-            pi.dump( (episode_length, residuals, rewards), open( 'qA6_data', "wb" ) )
-
-        #save trained model
-        model_file_name = '_'.join(path_arr)
-        save_model(sess, model_file_name, root_dir)
-
-
+            pi.dump( (episode_length, residuals, rewards), open( model_file_name+'.pi', "wb" ) )
+            
 #         (episode_length, losses, rewards) = pi.load( open( 'qA4_data', "rb" ) )
     
         x_s = np.arange(0, n_episodes, 1)
@@ -212,7 +223,7 @@ def run_net(learning_rate, FLAGS):
         plt.figure(1, figsize=(12, 8))
         plt.subplot(311)
         plt.plot(x_s, np.mean(residuals, axis=0), 'r-')
-        plt.title("trajectory length: "+str(trajectory_len) + 
+        plt.title("Double Q: "+str(use_double_Q_learning) + 
                   ' mean episode length: ' + str(np.asscalar(np.mean(episode_length))))
         plt.ylabel('Absolute Residual')
         
@@ -225,10 +236,59 @@ def run_net(learning_rate, FLAGS):
         plt.xlabel('episode #')
         plt.ylabel('Return')
         plt.tight_layout()
+        plt.savefig('Fig_' + model_file_name)
         plt.show() 
-        
-                    
 
+def plot_data(n_episodes):
+    (episode_length_f, residuals_f, rewards_f) = pi.load( open( 'qA8_rep10_DQFalse_0.pi', "rb" ) )
+    (episode_length_t, residuals_t, rewards_t) = pi.load( open( 'qA8_rep10_DQTrue_0.pi', "rb" ) )
+
+    x_interval = 20    
+
+    x_s = np.arange(0, n_episodes, x_interval)
+    
+    fig = plt.figure(1, figsize=(15, 5))
+#     plt.title("No hidden units: "+str(n_hidden))
+    plt.subplot(311)
+    plt.plot(x_s, np.mean(residuals_t, axis=0)[0::x_interval], 'r-',label='Double Q learning')
+    plt.plot(x_s, np.mean(residuals_f, axis=0)[0::x_interval], 'b--',label='no Double Q learning', linewidth=0.5)
+    plt.ylabel('Absolute Residual')
+    plt.legend(loc=0, borderaxespad=1.)
+    
+    print('residuals: {:.1f} {:.1f}'.format(np.asscalar(np.mean(residuals_t)),
+                               np.asscalar(np.mean(residuals_f))))
+    print('episode length: {:.1f} {:.1f}'.format(np.asscalar(np.mean(episode_length_t)),
+                               np.asscalar(np.mean(episode_length_f))))
+    print('returns: {:.3f} {:.3f}'.format(np.asscalar(np.mean(rewards_t)),
+                               np.asscalar(np.mean(rewards_f))))
+    plt.subplot(312)
+    plt.plot(x_s, np.mean(episode_length_t, axis=0)[0::x_interval], 'r-',label='frozen target update')
+    plt.plot(x_s, np.mean(episode_length_f, axis=0)[0::x_interval], 'b--',label='no frozen target', linewidth=0.5)
+    plt.ylabel('Episode length')
+    
+    plt.subplot(313)
+    plt.plot(x_s, np.mean(rewards_t, axis=0)[0::x_interval], 'r-',label='frozen target update')
+    plt.plot(x_s, np.mean(rewards_f, axis=0)[0::x_interval], 'b--',label='no frozen target', linewidth=0.5)
+    plt.xlabel('episode #')
+    plt.ylabel('Return')
+    
+#     fig.legend((res20,res100,res1000), ('30 hidden units','100 hidden units','1000 hidden units'), 'lower right')
+    plt.tight_layout()
+    plt.show() 
+    exit()
+     
+def randomly_pick_AorB_net(use_double_Q_learning, Qfunc, x, target, loss, residual, train_step, 
+         Qfunc_tar, x_tar, target_tar, loss_tar, residual_tar, train_step_tar): 
+         
+    if use_double_Q_learning:              
+        if random.random() < 0.5:
+            return Qfunc, x, target, loss, residual, train_step, Qfunc_tar, x_tar
+        else: 
+            return Qfunc_tar, x_tar, target_tar, loss_tar, residual_tar, train_step_tar, Qfunc, x
+    else:
+        return Qfunc, x, target, loss, residual, train_step, Qfunc, x
+            
+        
 def get_epsilon_greedy_action(sess, Qfunc, x, s, epsilon):
 
     s = np.expand_dims( np.transpose(s), axis=0)
@@ -241,4 +301,4 @@ def get_epsilon_greedy_action(sess, Qfunc, x, s, epsilon):
         max_a = np.argmax(Qfunc_s_t, axis=1)
         return max_a[0], Qfunc_s_t
     
-# run_net(1e-3)
+# run_net(1e-3, FLAGS)

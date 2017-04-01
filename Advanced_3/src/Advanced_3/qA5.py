@@ -4,19 +4,23 @@ import random
 import tensorflow as tf
 import pickle as pi
 import matplotlib.pyplot as plt
+import os
 
 root_dir = 'C:/Users/Dave/Documents/GI13-Advanced/Assignment3';
 summaries_dir = root_dir + '/Summaries';
 save_dir = root_dir;
-
-env = gym.make('CartPole-v0')
 
 MAX_EPISODES = 2000
 MAX_EPISODE_LENGTH = 300
 GAMMA = 0.99
 EPSILON = 0.05
 
-        
+def save_model(session, model_name, root_dir):
+    if not os.path.exists(root_dir + '/model/'):
+        os.mkdir(root_dir + '/model/')
+    saver = tf.train.Saver(write_version=1)
+    save_path = saver.save(session, root_dir + '/model/' + model_name +'.ckpt')
+
 def weight_variable(shape):
 #     initial = tf.constant(0.0, shape=shape)
     initial = tf.truncated_normal(shape, stddev=0.01)
@@ -47,8 +51,10 @@ def build_net(n_inputs, n_hidden, n_outputs, LAMBDA):
     return x, y, target, total_loss, residual
 
 
-def run_net(learning_rate):
-    n_hidden = 30
+def run_net(learning_rate, FLAGS):
+    env = gym.make('CartPole-v0')
+
+    n_hidden = 1000
     n_state_dims = 4
     LAMBDA = 0.000000001
     n_inputs = n_state_dims
@@ -64,6 +70,7 @@ def run_net(learning_rate):
                             for i in range(len(target_network_params))]
     
     train_step = tf.train.AdamOptimizer(learning_rate).minimize(loss)
+    path_arr = [FLAGS.model, "n_hidden{}".format(n_hidden), "lr{:g}".format(learning_rate)]
 
     with tf.Session() as sess:    
         n_episodes = 2000
@@ -128,6 +135,10 @@ def run_net(learning_rate):
             print('run {} len {}'.format(rep, np.asscalar(np.mean(episode_length[rep]))))
             pi.dump( (episode_length, residuals, rewards), open( 'qA5_data', "wb" ) )
 
+        #save trained model
+        model_file_name = '_'.join(path_arr)
+        save_model(sess, model_file_name, root_dir)
+
 #             plot_data(n_episodes, n_hidden)
 
 def plot_data(n_episodes):
@@ -189,4 +200,4 @@ def get_epsilon_greedy_action(sess, Qfunc, x, s, epsilon):
         return max_a[0], Qfunc_s_t
 
 # plot_data(n_episodes=2000)
-run_net(1e-3)
+# run_net(1e-3)

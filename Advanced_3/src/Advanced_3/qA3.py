@@ -3,6 +3,7 @@ import numpy as np
 import random
 import tensorflow as tf
 import pickle as pi
+import os
 
 from Advanced_1.convergenceTester import ConvergenceTester
 
@@ -11,11 +12,10 @@ summaries_dir = root_dir + '/Summaries';
 # save_dir = root_dir + '/SavedVariables';
 save_dir = root_dir;
 
-env = gym.make('CartPole-v0')
-
 MAX_EPISODES = 2000
 MAX_EPISODE_LENGTH = 300
 GAMMA = 0.99
+
 
 episode_length = np.zeros(MAX_EPISODES)
 returns = np.zeros(MAX_EPISODES)
@@ -26,6 +26,11 @@ returns = np.zeros(MAX_EPISODES)
 #     tags={'wrapper_config.TimeLimit.max_episode_steps': 500},
 #     reward_threshold=1000.0,
 # )
+def save_model(session, model_name, root_dir):
+    if not os.path.exists(root_dir + '/model/'):
+        os.mkdir(root_dir + '/model/')
+    saver = tf.train.Saver(write_version=1)
+    save_path = saver.save(session, root_dir + '/model/' + model_name +'.ckpt')
 
 class SingleEpisodeData:
     
@@ -123,7 +128,7 @@ class AllEpisodeData:
         self._r_t1.append(r_t1)
         self._s_t1.append(s_t1)
     
-    def collect_episodes(self, use_saved=True):
+    def collect_episodes(self, env, use_saved=True):
         if use_saved:
             self._data, self._s_t, self._a_t, self._r_t1, self._s_t1, self._sa_t, \
                 self._sa0_t1, self._sa1_t1 = pi.load( open( 'A3data', "rb" ) )    
@@ -203,7 +208,6 @@ def build_net(x, n_inputs, n_outputs):
     W = weight_variable([n_inputs, n_outputs])
     b = weight_variable([n_outputs])
     y = tf.matmul(x, W)
-#     y = -tf.sigmoid(tf.matmul(x, W) + b)
     return y, b, W
 
 def build_net2(x, n_inputs, n_hidden, n_outputs, use_batch_norm=True):
@@ -225,13 +229,13 @@ def build_net2(x, n_inputs, n_hidden, n_outputs, use_batch_norm=True):
     W_2 = weight_variable([n_hidden, n_outputs])
     b_2 = bias_variable([n_outputs])
     y = tf.matmul(h_1, W_2) + b_2
-#     y = -tf.sigmoid(tf.matmul(h_1, W_2) + b_2)
     
     return y, b_2, W_2
 
 
-def run_net(learning_rate):
-#     batch_size = MAX_EPISODES
+def run_net(learning_rate, FLAGS):
+    env = gym.make('CartPole-v0')
+
     batch_size = 16
     n_hidden = 100
     n_state_dims = 4
@@ -246,27 +250,29 @@ def run_net(learning_rate):
         n_outputs = 2
         
     
-    x = tf.placeholder(tf.float32, [None, n_inputs])
-    target = tf.placeholder(tf.float32, [None, n_outputs])
+    x = tf.placeholder(tf.float32, [None, n_inputs], 'x')
+    target = tf.placeholder(tf.float32, [None, n_outputs], 'target')
     mean_episode_length = tf.Variable(0.0)
     tf.summary.scalar('mean_episode_length', mean_episode_length)
     mean_return = tf.Variable(0.0)
     tf.summary.scalar('mean_return', mean_return)
 
 
-    Qfunc, b, W = build_net(x, n_inputs, n_outputs) 
-#     Qfunc, b, W = build_net2(x, n_inputs, n_hidden, n_outputs, use_batch_norm=False) 
+    if n_hidden==0:
+        Qfunc, b, W = build_net(x, n_inputs, n_outputs)
+    else:
+        Qfunc, b, W = build_net2(x, n_inputs, n_hidden, n_outputs, use_batch_norm=False) 
     loss = tf.reduce_mean(tf.square(tf.sub(target, Qfunc)))
     l2_loss = tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()])
     total_loss = loss + LAMBDA * l2_loss
     tf.summary.scalar('loss', loss)
 
-#     train_step = tf.train.GradientDescentOptimizer(learning_rate).minimize(loss)
     train_step = tf.train.AdamOptimizer(learning_rate).minimize(total_loss)
 #     train_step = tf.train.RMSPropOptimizer(learning_rate).minimize(total_loss)
 
     e_data = AllEpisodeData(MAX_EPISODES)     
-    num_training_samples = e_data.collect_episodes(use_saved=False)
+    num_training_samples = e_data.collect_episodes(env, use_saved=False)
+    path_arr = [FLAGS.model, "n_hidden{}".format(n_hidden), "lr{:g}".format(learning_rate)]
 
     with tf.Session() as sess:    
 
@@ -325,7 +331,7 @@ def run_net(learning_rate):
          
             if epoch % 1 == 0: #calc intermediate results
                 
-                mean_r, mean_episode_len = run_agent_on_env(sess, Qfunc, x, W, b, use_sa_input)
+                mean_r, mean_episode_len = run_agent_on_env(sess, env, Qfunc, x, W, b, use_sa_input)
                 assign_op1 = mean_return.assign(mean_r)
                 assign_op2 = mean_episode_length.assign(mean_episode_len)
                 sess.run([assign_op1, assign_op2])
@@ -364,6 +370,11 @@ def run_net(learning_rate):
 #                 if conv_tester.has_converged_to_constant(mean_episode_len, 200):
                     print('converged after ', epoch, ' epochs')
                     break
+
+        #save trained model
+        model_file_name = '_'.join(path_arr)
+        save_model(sess, model_file_name, root_dir)
+
                     
 
 def get_greedy_action(sess, Qfunc, x, s, W, b, use_sa_input):
@@ -391,7 +402,7 @@ def get_greedy_action(sess, Qfunc, x, s, W, b, use_sa_input):
         return max_Q, max_a[0]
 
 
-def run_agent_on_env(sess, Qfunc, x, W, b, use_sa_input):
+def run_agent_on_env(sess, env, Qfunc, x, W, b, use_sa_input):
     n_episodes = 100
     rewards = np.zeros(n_episodes)
     episode_length = np.zeros(n_episodes)
@@ -423,4 +434,4 @@ def run_agent_on_env(sess, Qfunc, x, W, b, use_sa_input):
     return mean_r, mean_episode_len
 
 
-run_net(1e-5)
+# run_net(1e-5)
