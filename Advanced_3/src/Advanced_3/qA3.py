@@ -236,7 +236,7 @@ def build_net2(x, n_inputs, n_hidden, n_outputs, use_batch_norm=True):
 def run_net(learning_rate, FLAGS):
     env = gym.make('CartPole-v0')
 
-    batch_size = 16
+    batch_size = 32
     n_hidden = 100
     n_state_dims = 4
     use_sa_input = False

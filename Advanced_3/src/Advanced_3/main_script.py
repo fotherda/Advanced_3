@@ -7,6 +7,8 @@ import sys
 import tensorflow as tf
 import logging
 logging.getLogger("tensorflow").setLevel(logging.ERROR)
+from pycallgraph import PyCallGraph
+from pycallgraph.output import GraphvizOutput
 
 
 # import Advanced_3.demo as p1        
@@ -16,6 +18,7 @@ import Advanced_3.qA5 as qA5
 import Advanced_3.qA6 as qA6      
 import Advanced_3.qA7 as qA7      
 import Advanced_3.qA8 as qA8      
+import Advanced_3.qB1 as qB1      
         
 
 def main(_): 
@@ -32,6 +35,8 @@ def main(_):
         qA7.run_net(1e-3, FLAGS)
     elif FLAGS.model=='qA8':
         qA8.run_net(1e-3, FLAGS)
+    elif FLAGS.model=='qB1':
+            qB1.run_net(FLAGS)
 
 #     p1.run_models(FLAGS)
     
