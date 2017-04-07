@@ -236,8 +236,12 @@ def build_net2(x, n_inputs, n_hidden, n_outputs, use_batch_norm=True):
 def run_net(learning_rate, FLAGS):
     env = gym.make('CartPole-v0')
 
+    if FLAGS.nhidden is not None:
+        n_hidden = int(FLAGS.nhidden)
+    else:
+        n_hidden = 100
+
     batch_size = 32
-    n_hidden = 100
     n_state_dims = 4
     use_sa_input = False
     LAMBDA = 0.000001
@@ -274,7 +278,17 @@ def run_net(learning_rate, FLAGS):
     num_training_samples = e_data.collect_episodes(env, use_saved=False)
     path_arr = [FLAGS.model, "n_hidden{}".format(n_hidden), "lr{:g}".format(learning_rate)]
 
-    with tf.Session() as sess:    
+    with tf.Session() as sess:  
+        if FLAGS.eval: #Restore saved model   
+            fn= FLAGS.model + '_' + FLAGS.nhidden + '_' + FLAGS.lr
+            model_file_name = root_dir + '/final_models/' + fn + '.ckpt'  
+            print('loading model from: ' + model_file_name)  
+            saver2restore = tf.train.Saver(write_version=1)
+            saver2restore.restore(sess, model_file_name)
+            mean_r, mean_episode_len = run_agent_on_env(sess, env, Qfunc, x, W, b, use_sa_input)
+            print('mean episode length {} discounted reward {}'.format(mean_episode_len, mean_r))
+            return
+  
 
         merged = tf.summary.merge_all()
         

@@ -54,7 +54,10 @@ def build_net(n_inputs, n_hidden, n_outputs, LAMBDA):
 def run_net(learning_rate, FLAGS):
     env = gym.make('CartPole-v0')
 
-    n_hidden = 1000
+    if FLAGS.nhidden is not None:
+        n_hidden = int(FLAGS.nhidden)
+    else:
+        n_hidden = 1000
     n_state_dims = 4
     LAMBDA = 0.000000001
     n_inputs = n_state_dims
@@ -71,10 +74,20 @@ def run_net(learning_rate, FLAGS):
     
     train_step = tf.train.AdamOptimizer(learning_rate).minimize(loss)
     path_arr = [FLAGS.model, "n_hidden{}".format(n_hidden), "lr{:g}".format(learning_rate)]
+    
+    n_episodes = 2000
+    n_repeats = 10
 
-    with tf.Session() as sess:    
-        n_episodes = 2000
-        n_repeats = 10
+    with tf.Session() as sess:   
+        if FLAGS.eval: #Restore saved model   
+            fn= FLAGS.model+FLAGS.nhidden
+            model_file_name = root_dir + '/final_models/' + fn + '.ckpt'  
+            print('loading model from: ' + model_file_name)  
+            saver2restore = tf.train.Saver(write_version=1)
+            saver2restore.restore(sess, model_file_name)
+            n_repeats=1
+            n_episodes=100
+ 
         
         target_update_interval = 1
         step_update_interval = 0
@@ -131,8 +144,15 @@ def run_net(learning_rate, FLAGS):
                     
                 if target_update_interval > 0 and episode % target_update_interval == 0: 
                     sess.run(update_target_op)
-                    
-            print('run {} len {}'.format(rep, np.asscalar(np.mean(episode_length[rep]))))
+            
+            
+            print('run {} mean episode length {} discounted reward {}'.
+                  format(rep, np.asscalar(np.mean(episode_length[rep])), 
+                         np.asscalar(np.mean(rewards[rep]))))
+
+            if FLAGS.eval:
+                return
+        
             pi.dump( (episode_length, residuals, rewards), open( 'qA5_data', "wb" ) )
 
         #save trained model

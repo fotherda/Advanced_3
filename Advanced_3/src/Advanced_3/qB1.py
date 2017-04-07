@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 import datetime#, time
 import sys
 from scipy.misc import toimage, imshow
-from skimage import color
-from skimage import exposure
+from skimage import color,exposure
+from skimage.measure import block_reduce
 from skimage.transform import resize, downscale_local_mean, rescale
 from scipy.misc import imresize
 from timeit import default_timer as timer
@@ -19,9 +19,6 @@ from pycallgraph.output import GraphvizOutput
 from pycallgraph import Config
 from tensorflow.core.framework import summary_pb2
 
-root_dir = 'C:/Users/Dave/Documents/GI13-Advanced/Assignment3';
-summaries_dir = root_dir + '/Summaries';
-save_dir = root_dir;
 
 MAX_EPISODE_LENGTH = 1e6
 MAX_AGENT_STEPS = 1e6
@@ -44,18 +41,26 @@ class AllEpisodeData:
         self._a_t = []
         self._r_t1 = []
         self._s_t1 = []
+        self._s_t_Qcheck = []
+        self._saved_Qcheck_data = False
         return
     
     def num_samples(self):
         return len(self._s_t)
     
-    def get_first_n_samples(self, n):
-        return self.get_data_from_idxs(range(n))
+    def get_Qcheck_data(self):
+        return self._s_t_Qcheck
+         
         
     def sample(self, batch_size):
         idxs = np.random.randint(self.num_samples(), size=batch_size)
         return self.get_data_from_idxs(idxs)
     
+    def save_Qcheck_data(self, n):
+        self._s_t_Qcheck = list(self._s_t[:n])
+        self._saved_Qcheck_data = True
+        return
+
     def get_data_from_idxs(self, idxs):
         s_ts = []
         a_ts = []
@@ -107,7 +112,7 @@ def build_net(n_actions):
     
     h_conv1 = tf.nn.conv2d(x_flt, W_conv1, strides=[1, 2, 2, 1], padding='SAME') + b_conv1
     h_relu1 = tf.nn.relu(h_conv1)
-    
+        
     W_conv2 = weight_variable([14, 14, 16, 32])
     b_conv2 = bias_variable([32])
     
@@ -138,15 +143,17 @@ def pre_process_state(frame):
 #     toimage(img_small).show()
     img = color.rgb2gray(frame)
 #     toimage(img).show()
-
+#     toimage(img[5:-45,:]).show()
 #     img_small = downscale_local_mean(img, (7,5))
-    img_small = resize(img, (110,84), order=0)
-    toimage(img_small).show()
-    img_small = img_small[:84,:]
-    toimage(img_small).show()
+#     img_small = resize(img, (110,84), order=0)
+#     toimage(img_small).show()
+#     img_small = img_small[:84,:]
     
     
-    img_small = resize(img, (28,28), order=0)
+#     img_small = block_reduce(img, (5,5))
+#     toimage(img_small).show()
+    img_small = resize(img[5:-45,:], (28,28), order=0)
+#     toimage(img_small).show()
 #     img_small = resize(img, (37,28), order=0)
 #     v_min, v_max = np.percentile(img_small, (20, 80))
 #     better_contrast = exposure.rescale_intensity(img_small, in_range=(v_min, v_max))
@@ -183,7 +190,8 @@ def train_net(sess, replay_buffer, max_training_samples,
         residual_val, loss_val, _ = sess.run([residual, loss, train_step], 
                                     feed_dict={x: s_ts, target: target_vals})
         
-    residual_val = np.asscalar(np.mean(np.fabs(residual_val)))
+    residual_val = np.asscalar(np.mean(residual_val))
+#     residual_val = np.asscalar(np.mean(np.fabs(residual_val)))
     loss_val = np.asscalar(np.mean(loss_val))
 
     res = summary_pb2.Summary.Value(tag="residual", simple_value=residual_val)
@@ -196,12 +204,12 @@ def check_Q(sess, replay_buffer, Qfunc, Qfunc_tar, x, x_tar, residual):
     
     nsamples = replay_buffer.num_samples()
     if nsamples >= QCHECK_NSTATES:
-        n = QCHECK_NSTATES
+        if not replay_buffer._saved_Qcheck_data:
+            replay_buffer.save_Qcheck_data(QCHECK_NSTATES)
     else:
-        n = nsamples
+        return 0.0
         
-    s_ts, _,_,_ = replay_buffer.get_first_n_samples(n)
-
+    s_ts = replay_buffer.get_Qcheck_data()
     Qfunc_s_t = sess.run(Qfunc, feed_dict={x: s_ts})
  
     max_Q = np.amax(Qfunc_s_t, axis=1)
@@ -256,10 +264,11 @@ def evaluate(sess, env, n_actions, Qfunc, x, train_writer, total_agent_steps):
     reward_val = np.asscalar(np.mean(rewards))   
     rewarundisc_val = np.asscalar(np.mean(rewards_undiscounted))   
     
-    etr = summary_pb2.Summary.Value(tag="eval test reward", simple_value=reward_val)
-    etru = summary_pb2.Summary.Value(tag="eval test reward undiscounted", simple_value=rewarundisc_val)
-    summary = summary_pb2.Summary(value=[etr, etru])
-    train_writer.add_summary(summary, total_agent_steps)
+    if train_writer is not None:
+        etr = summary_pb2.Summary.Value(tag="eval test reward", simple_value=reward_val)
+        etru = summary_pb2.Summary.Value(tag="eval test reward undiscounted", simple_value=rewarundisc_val)
+        summary = summary_pb2.Summary(value=[etr, etru])
+        train_writer.add_summary(summary, total_agent_steps)
     print('{} evaluation rewards {:.6f} rewards_undisc {:.6f}'.format(total_agent_steps, reward_val, rewarundisc_val))
     return
     
@@ -268,7 +277,12 @@ def run_net(FLAGS):
 #     plot_data(MAX_EPISODES)
 #     game = 'Boxing-v3'
 #     game = 'Pong-v3'
-    game = 'MsPacman-v3'
+
+    root_dir = os.getcwd()
+    summaries_dir = root_dir + '/Summaries';
+    save_dir = root_dir;
+
+    game = FLAGS.game + '-v3'
     print('Running ' + game)
     env = gym.make(game)
 
@@ -298,16 +312,18 @@ def run_net(FLAGS):
     max_training_samples = 0
     target_update_interval = 5000
     evaluation_interval = 50000
-    train_step_interval = 10
+    train_step_interval = 5
+    
     num_batches_per_episode = 1
     MAX_EPISODES = 10000
     EPSILON = 0.1
     save_model_interval = 100 #in epochs
+    frame_skip = 4
 
     path_arr = [FLAGS.model, "tui{}".format(target_update_interval), game]
 
     runB1 = False
-    runB2 = True
+    runB2 = False
     
     if runB1 is True: #set parameters to get results for part B.1
         MAX_EPISODES = 100
@@ -325,11 +341,21 @@ def run_net(FLAGS):
         save_model_interval = sys.maxsize
 
     with tf.Session() as sess:    
+        
+        if FLAGS.eval: #Restore saved model   
+            fn= FLAGS.model + '_' + FLAGS.game
+            model_file_name = root_dir + '/final_models/' + fn + '.ckpt'  
+            print('loading model from: ' + model_file_name)  
+            saver2restore = tf.train.Saver(write_version=1)
+            saver2restore.restore(sess, model_file_name)
+            evaluate(sess, env, n_actions, Qfunc, x, None, 0)
+            return
+
         episode_length = np.zeros((MAX_EPISODES))
         rewards = np.zeros((MAX_EPISODES))
 #         rewards_undiscounted = np.zeros((n_episodes))
         merged = tf.summary.merge_all()
-        dir_name = summaries_dir + '/B1/' + str(random.randint(0,99)) + '/lRate_' + str(learning_rate) ;
+        dir_name = summaries_dir + '/B1/' +game +'/' + str(random.randint(0,99)) + '/lRate_' + str(learning_rate) ;
         train_writer = tf.summary.FileWriter(dir_name + '/train', sess.graph)
 
         replay_buffer = AllEpisodeData()
@@ -359,10 +385,12 @@ def run_net(FLAGS):
             
             while t < MAX_EPISODE_LENGTH:
 #                 start = timer()
-#                 env.render()
+                env.render()
                     
                 s_t = np.transpose(frames, axes=(1,2,0)) #4 entries
-                a_t = get_epsilon_greedy_action(sess, Qfunc, x, s_t, EPSILON, n_actions)
+                if t % frame_skip == 0:
+                    a_t = get_epsilon_greedy_action(sess, Qfunc, x, s_t, EPSILON, n_actions)
+                
                 frame_t1, r_t1, done, _ = env.step(a_t)
                 frames.append(pre_process_state(frame_t1)) #4->5 entries
 #                 if r_t1 > 0 or r_t1 < 0:
@@ -411,12 +439,12 @@ def run_net(FLAGS):
             summary = summary_pb2.Summary(value=[cr, l, qc])
             train_writer.add_summary(summary, total_agent_steps)
 
-            if episode % 5 ==0:
+            if episode % 10 == 0:
                 end = timer()
                 total_duration = end-start
                 time_per_episode = total_duration / (episode+1)
                 print('{} len {} cum_rewards {:.3f} Qc {:.2f} as {:g} t/ep {:.1f}'.format(episode, t+1, 
-                        cum_rewards, Qcheck_val,total_agent_steps, time_per_episode))
+                        cum_rewards, Qcheck_val, total_agent_steps, time_per_episode))
 
             if episode % save_model_interval == 0 and episode>0:
                 #save trained model

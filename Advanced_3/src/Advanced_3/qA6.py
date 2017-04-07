@@ -116,13 +116,23 @@ def run_net(learning_rate, FLAGS):
     train_step = tf.train.AdamOptimizer(learning_rate).minimize(loss)
     path_arr = [FLAGS.model, "n_hidden{}".format(n_hidden), "lr{:g}".format(learning_rate)]
 
-    with tf.Session() as sess:    
-        n_episodes = 2
-        n_repeats = 1
-        trajectory_len = 5
-        num_training_epochs = 1
-        max_training_samples = 10000
-        
+    n_episodes = 2
+    n_repeats = 1
+    trajectory_len = 5
+    num_training_epochs = 1
+    max_training_samples = 10000
+    
+    with tf.Session() as sess:   
+        if FLAGS.eval: #Restore saved model   
+            fn= FLAGS.model
+            model_file_name = root_dir + '/final_models/' + fn + '.ckpt'  
+            print('loading model from: ' + model_file_name)  
+            saver2restore = tf.train.Saver(write_version=1)
+            saver2restore.restore(sess, model_file_name)
+            n_repeats=1
+            n_episodes=100
+            num_training_epochs=0
+ 
         episode_length = np.zeros((n_repeats, n_episodes))
         rewards = np.zeros((n_repeats, n_episodes))
         residuals = np.zeros((n_repeats, n_episodes))
@@ -197,9 +207,15 @@ def run_net(learning_rate, FLAGS):
                 residuals[rep,episode] = abs(np.asscalar(np.sum(residual_val)))
                     
                     
-            print('run {} len {}'.format(rep, np.asscalar(np.mean(episode_length[rep]))))
-            pi.dump( (episode_length, residuals, rewards), open( 'qA6_data', "wb" ) )
 
+            print('run {} mean episode length {} discounted reward {}'.
+                  format(rep, np.asscalar(np.mean(episode_length[rep])), 
+                     np.asscalar(np.mean(rewards[rep]))))
+
+            if FLAGS.eval:
+                return
+
+            pi.dump( (episode_length, residuals, rewards), open( 'qA6_data', "wb" ) )
         #save trained model
         model_file_name = '_'.join(path_arr)
         save_model(sess, model_file_name, root_dir)

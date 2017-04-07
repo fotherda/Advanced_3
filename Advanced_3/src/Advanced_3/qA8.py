@@ -95,9 +95,8 @@ def build_net(n_inputs, n_hidden, n_outputs, LAMBDA):
 
     return x, y, target, total_loss, residual
 
-
 def run_net(learning_rate, FLAGS):
-    plot_data(MAX_EPISODES)
+#     plot_data(MAX_EPISODES)
     env = gym.make('CartPole-v0')
     batch_size = 16
     n_hidden = 100
@@ -127,6 +126,17 @@ def run_net(learning_rate, FLAGS):
     path_arr = [FLAGS.model, "rep{}".format(n_repeats), "DQ{}".format(use_double_Q_learning)]
 
     with tf.Session() as sess:    
+        
+        if FLAGS.eval: #Restore saved model   
+            fn= FLAGS.model
+            model_file_name = root_dir + '/final_models/' + fn + '.ckpt'  
+            print('loading model from: ' + model_file_name)  
+            saver2restore = tf.train.Saver(write_version=1)
+            saver2restore.restore(sess, model_file_name)
+            n_repeats=1
+            n_episodes=1
+            num_training_epochs=0
+
         episode_length = np.zeros((n_repeats, n_episodes))
         rewards = np.zeros((n_repeats, n_episodes))
         residuals = np.zeros((n_repeats, n_episodes))
@@ -208,12 +218,16 @@ def run_net(learning_rate, FLAGS):
                 residuals[rep,episode] = abs(np.asscalar(np.sum(residual_val)))
                     
                     
+            print('run {} mean episode length {} discounted reward {}'.
+                  format(rep, np.asscalar(np.mean(episode_length[rep])), 
+                         np.asscalar(np.mean(rewards[rep]))))
 
+            if FLAGS.eval:
+                return
             #save trained model
             model_file_name = '_'.join(path_arr)+'_'+ str(epoch) #write every epoch
             save_model(sess, model_file_name, root_dir)
 
-            print('run {} len {}'.format(rep, np.asscalar(np.mean(episode_length[rep]))))
             pi.dump( (episode_length, residuals, rewards), open( model_file_name+'.pi', "wb" ) )
             
 #         (episode_length, losses, rewards) = pi.load( open( 'qA4_data', "rb" ) )

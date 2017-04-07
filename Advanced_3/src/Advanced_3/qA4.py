@@ -73,9 +73,19 @@ def run_net(learning_rate, FLAGS):
     train_step = tf.train.AdamOptimizer(learning_rate).minimize(loss)
     path_arr = [FLAGS.model, "n_hidden{}".format(n_hidden), "lr{:g}".format(learning_rate)]
 
-    with tf.Session() as sess:    
-        n_episodes = 2000
-        n_repeats = 100
+    n_episodes = 2000
+    n_repeats = 100
+    
+    with tf.Session() as sess:   
+        if FLAGS.eval: #Restore saved model   
+            fn= FLAGS.model
+            model_file_name = root_dir + '/final_models/' + fn + '.ckpt'  
+            print('loading model from: ' + model_file_name)  
+            saver2restore = tf.train.Saver(write_version=1)
+            saver2restore.restore(sess, model_file_name)
+            n_repeats=1
+            n_episodes=100
+ 
         
         target_update_interval = 1
         step_update_interval = 0
@@ -132,8 +142,14 @@ def run_net(learning_rate, FLAGS):
                     
                 if target_update_interval > 0 and episode % target_update_interval == 0: 
                     sess.run(update_target_op)
-                    
-            print('run {} len {}'.format(rep, np.asscalar(np.mean(episode_length[rep]))))
+            
+            print('run {} mean episode length {} discounted reward {}'.
+                  format(rep, np.asscalar(np.mean(episode_length[rep])), 
+                         np.asscalar(np.mean(rewards[rep]))))
+
+            if FLAGS.eval:
+                return
+        
             pi.dump( (episode_length, residuals, rewards), open( 'qA4_data', "wb" ) )
 
         #save trained model
